@@ -3,5 +3,5 @@ services:
     build: .
     env_file: .env
     ports:
-      - "8080:8080"
+      - "${MCP_HTTP_PORT:-8080}:${MCP_HTTP_PORT:-8080}"
     restart: unless-stopped
