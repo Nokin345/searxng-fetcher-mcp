@@ -1,0 +1,35 @@
+{
+  "name": "searxng-fetcher-mcp",
+  "version": "1.0.0",
+  "description": "MCP server with web search (SearXNG) and URL reading",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "bin": {
+    "searxng-fetcher-mcp": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && shx chmod +x dist/*.js",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "express": "^5.2.1",
+    "node-html-markdown": "^2.0.0",
+    "undici": "7.28.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "22.20.1",
+    "shx": "^0.4.0",
+    "typescript": "^5.8.3"
+  }
+}
