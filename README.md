@@ -16,7 +16,7 @@ MCP server with two tools:
 git clone https://github.com/Nokin345/searxng-fetcher-mcp.git
 cd searxng-fetcher-mcp
 cp .env.example .env
-docker compose up --build
+docker compose up -d --build
 ```
 
 The server will be available on port 8080.
