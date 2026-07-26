@@ -27,6 +27,22 @@ The server will be available on port 8080.
 | `/sse` | GET | SSE (legacy MCP clients) |
 | `/messages` | POST | SSE message endpoint |
 
+## Client Configuration
+
+Connect your MCP client using HTTP Streamable Transport. Configure your client with the server URL:
+
+```json
+{
+  "mcpServers": {
+    "searxng-fetcher": {
+      "url": "http://<SERVER_IP>:<PORT>/mcp"
+    }
+  }
+}
+```
+
+Replace `<SERVER_IP>` with your server's IP address and `<PORT>` with the port from your `.env` file (default: `8080`).
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
