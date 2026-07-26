@@ -13,6 +13,8 @@ MCP server with two tools:
 ## Running with Docker
 
 ```bash
+git clone https://github.com/Nokin345/searxng-fetcher-mcp.git
+cd searxng-fetcher-mcp
 cp .env.example .env
 docker compose up --build
 ```
