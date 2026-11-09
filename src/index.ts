@@ -8,6 +8,8 @@ import { createHttpServer } from "./http-server.js";
 const SEARCH_DESCRIPTION =
   "Searches the web using SearXNG and returns a list of results, each with a title, URL, and content snippet. " +
   "The required parameter name is exactly `query`. " +
+  "Results are ranked by SearXNG score and truncated to `num_results` (default 10); the trailing "
+  "footers report how many results were withheld and which engines did not answer. "
   "Use `pageno` to paginate; combine `time_range` and `language` to narrow scope. " +
   "To read the full text of a result URL, follow up with `web_url_read`.";
 
@@ -39,12 +41,20 @@ export function createMcpServer(): McpServer {
     SEARCH_DESCRIPTION,
     {
       query: z.string().describe("The search query string."),
-      pageno: z.number().optional().describe("Search page number (starts at 1)").default(1),
+      pageno: z.number().int().min(1).optional().describe("Search page number (starts at 1)").default(1),
       time_range: z.enum(["day", "week", "month", "year"]).optional().describe("Time range of search"),
       language: z.string().optional().describe("Language code (e.g., 'en', 'fr', 'de')").default("all"),
       safesearch: z.enum(["0", "1", "2"]).optional().describe("Safe search level (0: None, 1: Moderate, 2: Strict)"),
-      min_score: z.number().min(0).max(1).optional().describe("Minimum relevance score 0.0-1.0"),
-      num_results: z.number().int().min(1).max(20).optional().describe("Max results to return (1-20)"),
+      min_score: z
+        .number()
+        .min(0)
+        .optional()
+        .describe(
+          "Minimum relevance score threshold (default 0 = no filtering). SearXNG scores are summed " +
+            "across the engines that agree on a result, so they are not 0-1: roughly 15-22 results " +
+            "per query score >= 1, 4-8 score >= 3, and the top hit scores 10-50.",
+        ),
+      num_results: z.number().int().min(1).max(20).optional().describe("Max results to return (1-20, default 10)"),
       categories: z.string().optional().describe("Comma-separated SearXNG categories"),
       engines: z.string().optional().describe("Comma-separated SearXNG engine names"),
       response_format: z.enum(["text", "json"]).optional().describe("Response format: text or json").default("text"),

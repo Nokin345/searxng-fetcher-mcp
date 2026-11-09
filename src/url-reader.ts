@@ -145,21 +145,26 @@ export async function fetchUrl(url: string, args: UrlReadArgs): Promise<string> 
       return `Error: Failed to fetch ${finalUrl}: ${err.message}`;
     }
 
-    if (isRedirect(resp.statusCode) && resp.headers.location) {
+    // undici's fetch() returns a web Response: use status/statusText and
+    // Headers.get(). The previous `statusCode`/`headers["content-type"]` reads
+    // were undefined, so errors came back as "status undefined: undefined",
+    // every read reported "Content-Type: unknown", and the binary/PDF rejection
+    // below was unreachable (a PDF came back as ~5MB of raw bytes).
+    if (isRedirect(resp.status) && resp.headers.get("location")) {
       redirectCount++;
       try {
-        finalUrl = new URL(resp.headers.location, finalUrl).href;
+        finalUrl = new URL(resp.headers.get("location") as string, finalUrl).href;
       } catch {
-        return `Error: Invalid redirect URL: ${resp.headers.location}`;
+        return `Error: Invalid redirect URL: ${resp.headers.get("location")}`;
       }
       continue;
     }
 
     if (!resp.ok) {
-      return `Error: ${finalUrl} returned status ${resp.statusCode}: ${resp.statusMessage}`;
+      return `Error: ${finalUrl} returned status ${resp.status}: ${resp.statusText}`;
     }
 
-    contentType = resp.headers["content-type"] || resp.headers["content-type"] || "";
+    contentType = resp.headers.get("content-type") || "";
 
     const body = resp.body;
     if (!body) {

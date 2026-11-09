@@ -24,6 +24,14 @@ export interface SearchResult {
   publishedDate?: string;
 }
 
+// SearXNG fans out to every configured engine and can hand back 100-250 results;
+// that is far more than a context window wants, so a result count is always
+// applied. Override with DEFAULT_NUM_RESULTS (1-20).
+const DEFAULT_NUM_RESULTS = Math.min(
+  20,
+  Math.max(1, parseInt(process.env.DEFAULT_NUM_RESULTS || "10", 10) || 10),
+);
+
 export async function performWebSearch(args: SearchArgs, searxngUrl: string): Promise<string> {
   const params = new URLSearchParams();
   params.set("q", args.query);
@@ -96,18 +104,51 @@ export async function performWebSearch(args: SearchArgs, searxngUrl: string): Pr
     publishedDate: r.publishedDate,
   }));
 
+  // This SearXNG build ignores the `min_score` query parameter, so the filter is
+  // applied here. Scores are summed across the engines that agree on a result,
+  // which makes them a usable consensus signal: in practice ~15-22 results per
+  // query score >= 1, ~4-8 score >= 3, and the top hit scores 10-50.
+  const minScore = args.min_score ?? 0;
+  const scored = minScore > 0 ? results.filter((r) => (r.score ?? 0) >= minScore) : results;
+
+  // SearXNG's `num_results` query parameter does not truncate the response (it
+  // only feeds its score threshold), so the cap advertised by the tool schema is
+  // enforced here. Unresponsiveness is surfaced in both formats: with an
+  // availability-first engine set it is the only signal that a tier went down.
+  const cap = args.num_results ?? DEFAULT_NUM_RESULTS;
+  const truncated = scored.slice(0, cap);
+  const unresponsive = (data.unresponsive_engines || []).map(
+    (entry: any) => (Array.isArray(entry) ? `${entry[0]}: ${entry[1]}` : String(entry)),
+  );
+
   if (args.response_format === "json") {
     return JSON.stringify({
       query: args.query,
       number_of_results: data.number_of_results || results.length,
-      results: results,
+      returned: truncated.length,
+      total_available: results.length,
+      filtered_out_by_min_score: results.length - scored.length,
+      results: truncated,
       suggestions: data.suggestions || [],
       corrections: data.corrections || [],
       answers: data.answers || [],
+      infoboxes: data.infoboxes || [],
+      unresponsive_engines: unresponsive,
     }, null, 2);
   }
 
-  return formatTextResults(results, args.query, data);
+  const text = formatTextResults(truncated, args.query, data);
+  const footer: string[] = [];
+  if (results.length > scored.length) {
+    footer.push(`(${results.length - scored.length} results dropped by min_score=${minScore})`);
+  }
+  if (scored.length > truncated.length) {
+    footer.push(`(${scored.length - truncated.length} more results available; raise \`num_results\` to up to 20 or use \`pageno\`)`);
+  }
+  if (unresponsive.length > 0) {
+    footer.push(`Engines that did not answer (${unresponsive.length}): ${unresponsive.join(", ")}`);
+  }
+  return footer.length ? `${text}\n\n${footer.join("\n")}` : text;
 }
 
 function formatTextResults(results: SearchResult[], query: string, data: any): string {
@@ -140,6 +181,14 @@ function formatTextResults(results: SearchResult[], query: string, data: any): s
 
   if (data.corrections && data.corrections.length > 0) {
     output += `Corrections: ${data.corrections.join(", ")}\n\n`;
+  }
+
+  if (data.infoboxes && data.infoboxes.length > 0) {
+    output += `Infoboxes:\n`;
+    for (const infobox of data.infoboxes) {
+      output += `  ${infobox.infobox}: ${infobox.content || ""}\n`;
+    }
+    output += "\n";
   }
 
   for (let i = 0; i < results.length; i++) {
