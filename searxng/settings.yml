@@ -1,9 +1,145 @@
+# Availability-first configuration for the searxng-fetcher-mcp stack.
+#
+# Availability here means redundancy across independent failure domains, and the
+# engine set below is the outcome of measuring every candidate against THIS host
+# (residential IP, Macau). See searxng-ref/probe*.py for the methodology:
+# each engine was queried individually and results were only counted when the
+# result carried that engine's own name (an unknown/inactive engine name is
+# silently ignored by SearXNG and would otherwise look like a success).
+#
+#   tier A  API-style endpoints, fast, not gated on our egress IP
+#   tier B  third-party aggregators / mirrors (they search from their own IPs)
+#   tier C  HTML scrapers that do hit our egress IP (kept few, kept short)
+#
+# No `weight:` overrides anywhere: weight only reorders results and lowers
+# normalized scores (which hurts `min_score` in the MCP), never availability.
+
 use_default_settings: true
 
 server:
+  # Replaced by the compose entrypoint (sed on __SEARXNG_SECRET__).
   secret_key: "__SEARXNG_SECRET__"
+  # Must stay false: the limiter caps non-HTML traffic (format=json) at 4
+  # requests/hour per client network, which would throttle this MCP into 429s.
+  # Valkey/Redis is therefore not needed at all (limiter is its only consumer).
+  limiter: false
+  public_instance: false
+  method: GET
 
 search:
-  formats:
-    - html
-    - json
+  # json is required: src/search.ts always sends format=json.
+  formats: [html, json]
+  safe_search: 0
+  default_lang: "auto"
+  autocomplete: ""
+  # Engine failures must cost seconds, not days. Packaged defaults are 180/3600s
+  # and the code-level fallback is 86400s, so state them explicitly.
+  ban_time_on_fail: 1
+  max_ban_time_on_fail: 5
+  suspended_times:
+    SearxEngineAccessDenied: 20
+    SearxEngineCaptcha: 60
+    SearxEngineTooManyRequests: 30
+    cf_SearxEngineCaptcha: 180
+    cf_SearxEngineAccessDenied: 60
+    recaptcha_SearxEngineCaptcha: 900
+
+outgoing:
+  request_timeout: 6.0
+  # Below SEARCH_TIMEOUT_MS (20s) so SearXNG always answers with partial results
+  # instead of the MCP client aborting with nothing.
+  max_request_timeout: 10.0
+  # Default is 0: one 403/500 used to be an instant engine failure.
+  retries: 2
+  enable_http2: true
+  pool_connections: 100
+
+engines:
+  # ---------- tier A: API-style, 0.3-1.5s, measured 4/4 ----------
+  - name: google cse
+    timeout: 5.0
+    network: {retries: 2, retry_on_http_error: [403, 429, 500, 502, 503]}
+  - name: mwmbl
+    disabled: false
+    timeout: 5.0
+  - name: privacywall
+    disabled: false
+    timeout: 6.0
+  - name: swisscows
+    disabled: false
+    inactive: false
+    timeout: 5.0
+  - name: yandex
+    disabled: false
+    timeout: 5.0
+  - name: naver
+    disabled: false
+    timeout: 5.0
+  - name: fynd
+    disabled: false
+    timeout: 5.0
+  - name: reloado
+    disabled: false
+    timeout: 6.0
+  # qwant is 4/4 when queried politely and 0/4 when hammered; keep it, it is a
+  # genuinely independent failure domain.
+  - name: qwant
+    disabled: false
+    timeout: 5.0
+    network: {retries: 1, retry_on_http_error: [403, 429, 500, 502, 503]}
+
+  # ---------- tier B: aggregators/mirrors, measured 4/4 ----------
+  - name: metacrawler
+    disabled: false
+    inactive: false
+    timeout: 6.0
+  - {name: avalw, disabled: false, inactive: false, timeout: 6.0}
+  - {name: kukei, disabled: false, inactive: false, timeout: 6.0}
+  - {name: cl0q,  disabled: false, inactive: false, timeout: 6.0}
+
+  # ---------- tier C: our own egress IP is visible; kept short ----------
+  - name: mojeek
+    disabled: false
+    inactive: false
+    timeout: 6.0
+    network: {retries: 1, retry_on_http_error: [403, 429, 500, 502, 503]}
+  - name: duckduckgo
+    timeout: 5.0
+    network: {retries: 1, retry_on_http_error: [403, 429, 500, 502, 503]}
+  - name: yahoo
+    disabled: false
+    timeout: 5.0
+    network: {retries: 1, retry_on_http_error: [403, 429, 500, 502, 503]}
+  # brave (html) is rate-limited from a residential IP: 1/4 "too many requests".
+  # Swap it for `braveapi` with a free API key if you want it dependable.
+  - name: brave
+    timeout: 5.0
+    network: {retries: 1, retry_on_http_error: [403, 429, 500, 502, 503]}
+
+  # ---------- conditional: only answer entity lookups ----------
+  # wikipedia/wikidata return results solely when the query matches an article /
+  # entity, so they score 0/4 on topical queries but are still worth keeping:
+  # they are the only engines that produce `infoboxes` and `answers`.
+  - name: wikipedia
+    # Default display_type is ["infobox"] only, so it never produced ranked results.
+    display_type: ["list", "infobox"]
+    timeout: 5.0
+  - name: wikidata
+    timeout: 3.0
+
+  # ---------- measured dead or hopeless from this host, left off ----------
+  # google(html) access denied · bing returns nothing · 360search timeout
+  # dogpile/fireball/searchmysite access denied · resulthunter crash
+  # quark crash/CAPTCHA · seekninja timeout · startpagina parsing error
+  # searchrockit silently empty · startpage "Anubis difficulty too high" (PoW)
+  # wolframalpha timeout (needs api_key) · zapmeta/fastbot/tusksearch/yep/wikimini
+  # gabanza SSL · crowdview/vuhuv empty · marginalia needs api_key
+  - name: marginalia
+    inactive: true
+  # - name: braveapi
+  #   disabled: false
+  #   inactive: false
+  #   api_key: ""
+  # - name: wolframalpha
+  #   disabled: false
+  #   api_key: ""      # only works with a Wolfram App ID

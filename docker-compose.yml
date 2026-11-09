@@ -3,13 +3,27 @@ services:
     build: .
     env_file: .env
     ports:
-      - "${MCP_HTTP_PORT:-8080}:${MCP_HTTP_PORT:-8080}"
+      # Loopback-only on the host. The server itself keeps listening on
+      # 0.0.0.0 inside the container (MCP_HTTP_HOST), because docker-proxy
+      # connects to the container's own IP, not to its loopback interface.
+      - "127.0.0.1:${MCP_HTTP_PORT:-8080}:${MCP_HTTP_PORT:-8080}"
     depends_on:
       searxng:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", 'node -e "fetch(\"http://127.0.0.1:${MCP_HTTP_PORT:-8080}/healthz\").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
   searxng:
-    image: docker.io/searxng/searxng:latest
+    # Pinned to the digest of searxng/searxng:latest = 2026.11.9-57ff753ad.
+    # SearXNG ships no dated tags, so a routine `latest` pull could change
+    # engine behaviour (or drop /healthz) under a running stack. Upgrade on
+    # purpose with: docker pull searxng/searxng:latest && docker image inspect \
+    #   searxng/searxng:latest -f '{{.RepoDigests}}'
+    image: docker.io/searxng/searxng@sha256:287af61f1a13e86d02974fcde91a3413a9945788de38b61ffbc491d81a19bcc2
     entrypoint:
       - /bin/sh
       - -c
@@ -23,9 +37,12 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
-      interval: 5s
-      timeout: 6s
-      retries: 20
-      start_period: 10s
+      # /healthz is SearXNG's dedicated liveness route (and is exempt from the
+      # limiter); fall back to / on images that predate it. Probing / renders a
+      # full HTML page, which is why it is only the fallback.
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://localhost:8080/healthz',timeout=4).status==200 else 1)\" || python -c \"import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://localhost:8080/',timeout=5).read(1) else 1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
     restart: unless-stopped
