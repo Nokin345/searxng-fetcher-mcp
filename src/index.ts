@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isWebSearchArgs, isUrlReadArgs } from "./types.js";
 import { performWebSearch } from "./search.js";
 import { fetchUrl } from "./url-reader.js";
 import { createHttpServer } from "./http-server.js";
+
+const SERVER_NAME = "searxng-fetcher-mcp";
+const SERVER_VERSION = "1.0.0";
 
 const SEARCH_DESCRIPTION =
   "Searches the web using SearXNG and returns a list of results, each with a title, URL, and content snippet. " +
@@ -32,8 +34,8 @@ function getBaseUrl(): string {
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
-    name: "searxng-fetcher-mcp",
-    version: "1.0.0",
+    name: SERVER_NAME,
+    version: SERVER_VERSION,
   });
 
   server.tool(
@@ -60,13 +62,6 @@ export function createMcpServer(): McpServer {
       response_format: z.enum(["text", "json"]).optional().describe("Response format: text or json").default("text"),
     },
     async (args) => {
-      if (!isWebSearchArgs(args)) {
-        return {
-          content: [{ type: "text", text: "Invalid search arguments." }],
-          isError: true,
-        };
-      }
-
       const searxngUrl = getBaseUrl();
       const result = await performWebSearch(args, searxngUrl);
 
@@ -88,13 +83,6 @@ export function createMcpServer(): McpServer {
       readHeadings: z.boolean().optional().describe("Return only headings"),
     },
     async (args) => {
-      if (!isUrlReadArgs(args)) {
-        return {
-          content: [{ type: "text", text: "Invalid URL read arguments." }],
-          isError: true,
-        };
-      }
-
       const result = await fetchUrl(args.url, args);
 
       return {
@@ -115,7 +103,8 @@ export async function main() {
       return createMcpServer();
     },
     port,
-    host
+    host,
+    { name: SERVER_NAME, version: SERVER_VERSION }
   );
 
   process.on("SIGINT", async () => {

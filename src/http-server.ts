@@ -2,42 +2,42 @@ import express, { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 
-interface Sessions {
-  streamable: Record<string, StreamableHTTPServerTransport>;
-  sse: Record<string, SSEServerTransport>;
+export interface ServerInfo {
+  name: string;
+  version: string;
 }
 
+/**
+ * Streamable HTTP transport only (MCP spec 2025-03-10+).
+ *
+ * The legacy HTTP+SSE transport (`GET /sse` + `POST /messages`, spec 2024-10-22)
+ * is deprecated in the SDK and implemented no session resumption here, so it
+ * held one long-lived socket per session for no benefit. Note that `/mcp` may
+ * still answer a POST with `text/event-stream`: that is Streamable HTTP's own
+ * streaming, not the legacy transport.
+ */
 export async function createHttpServer(
   createMcpServer: () => Promise<McpServer>,
   port: number,
-  host: string
+  host: string,
+  info: ServerInfo
 ): Promise<{ app: express.Application; shutdown: () => Promise<void> }> {
   const app = express();
   app.use(express.json());
 
-  const sessions: Sessions = {
-    streamable: {},
-    sse: {},
-  };
+  const sessions: Record<string, StreamableHTTPServerTransport> = {};
 
   let httpServer: any = null;
 
-  app.get("/", (_req: Request, res: Response) => {
-    res.send(`
-      <html>
-        <head><title>MCP Server</title></head>
-        <body>
-          <h1>MCP Server</h1>
-          <p>Endpoints:</p>
-          <ul>
-            <li><code>/mcp</code> - Streamable HTTP (modern MCP protocol)</li>
-            <li><code>/sse</code> - SSE (legacy MCP protocol)</li>
-          </ul>
-        </body>
-      </html>
-    `);
+  app.get("/healthz", (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+      name: info.name,
+      version: info.version,
+      transport: "streamable-http",
+      endpoint: "/mcp",
+    });
   });
 
   app.post("/mcp", async (req: Request, res: Response) => {
@@ -45,19 +45,19 @@ export async function createHttpServer(
     let transport: StreamableHTTPServerTransport;
 
     try {
-      if (sessionId && sessions.streamable[sessionId]) {
-        transport = sessions.streamable[sessionId];
+      if (sessionId && sessions[sessionId]) {
+        transport = sessions[sessionId];
       } else if (!sessionId && isInitializeRequest(req.body)) {
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid: string) => {
-            sessions.streamable[sid] = transport;
+            sessions[sid] = transport;
           },
         });
 
         transport.onclose = () => {
           if (transport.sessionId) {
-            delete sessions.streamable[transport.sessionId];
+            delete sessions[transport.sessionId];
           }
         };
 
@@ -94,7 +94,8 @@ export async function createHttpServer(
 
   app.get("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    if (!sessionId || !sessions.streamable[sessionId]) {
+    const transport = sessionId ? sessions[sessionId] : undefined;
+    if (!transport) {
       if (!res.headersSent) {
         res.status(400).send("Invalid or missing session ID");
       }
@@ -102,7 +103,6 @@ export async function createHttpServer(
     }
 
     try {
-      const transport = sessions.streamable[sessionId];
       await transport.handleRequest(req, res);
     } catch (error: any) {
       if (!res.headersSent) {
@@ -113,7 +113,8 @@ export async function createHttpServer(
 
   app.delete("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    if (!sessionId || !sessions.streamable[sessionId]) {
+    const transport = sessionId ? sessions[sessionId] : undefined;
+    if (!transport) {
       if (!res.headersSent) {
         res.status(400).send("Invalid or missing session ID");
       }
@@ -121,7 +122,6 @@ export async function createHttpServer(
     }
 
     try {
-      const transport = sessions.streamable[sessionId];
       await transport.handleRequest(req, res);
     } catch (error: any) {
       if (!res.headersSent) {
@@ -130,54 +130,14 @@ export async function createHttpServer(
     }
   });
 
-  app.get("/sse", async (req: Request, res: Response) => {
-    try {
-      const transport = new SSEServerTransport("/messages", res);
-      sessions.sse[transport.sessionId] = transport;
-
-      res.on("close", () => {
-        delete sessions.sse[transport.sessionId];
-      });
-
-      const server = await createMcpServer();
-      await server.connect(transport);
-    } catch (error: any) {
-      if (!res.headersSent) {
-        res.status(500).send(`Internal server error: ${error.message}`);
-      }
-    }
-  });
-
-  app.post("/messages", async (req: Request, res: Response) => {
-    const sessionId = req.query.sessionId as string;
-    const transport = sessionId ? sessions.sse[sessionId] : undefined;
-
-    if (transport) {
-      try {
-        await transport.handlePostMessage(req, res, req.body);
-      } catch (error: any) {
-        if (!res.headersSent) {
-          res.status(500).send(`Internal server error: ${error.message}`);
-        }
-      }
-    } else {
-      if (!res.headersSent) {
-        res.status(400).send("No transport found for session ID");
-      }
-    }
-  });
-
   httpServer = app.listen(port, host, () => {
-    console.log(`MCP HTTP server listening on ${host}:${port}`);
+    console.log(`MCP HTTP server listening on ${host}:${port} (Streamable HTTP: /mcp)`);
   });
 
   return {
     app,
     shutdown: async () => {
-      Object.values(sessions.streamable).forEach((t) => {
-        try { t.close(); } catch {}
-      });
-      Object.values(sessions.sse).forEach((t) => {
+      Object.values(sessions).forEach((t) => {
         try { t.close(); } catch {}
       });
 

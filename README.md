@@ -25,9 +25,12 @@ The server will be available on port 8080.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/mcp` | POST/GET/DELETE | Streamable HTTP (modern MCP clients) |
-| `/sse` | GET | SSE (legacy MCP clients) |
-| `/messages` | POST | SSE message endpoint |
+| `/mcp` | POST/GET/DELETE | Streamable HTTP (the only MCP transport) |
+| `/healthz` | GET | Liveness probe: name, version, transport |
+
+Streamable HTTP is the MCP transport as of spec 2025-03-10; the legacy HTTP+SSE
+transport (`GET /sse` + `POST /messages`) has been removed. A POST to `/mcp` may
+still answer `text/event-stream` — that is Streamable HTTP streaming, not SSE.
 
 ## Client Configuration
 
